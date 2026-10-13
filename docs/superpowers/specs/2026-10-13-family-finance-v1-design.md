@@ -12,8 +12,8 @@ A self-hosted household finance app for **one family**, built because the existi
 options (Firefly III, Actual Budget, Securo, Econumo, Expensave) have the features
 but a UI nobody enjoys opening.
 
-**Who it's for:** the household — 2 adults plus optionally kids, on phones and a
-laptop, over the home LAN.
+**Who it's for:** the household — 2 adults, on a laptop and on phones, over the
+home LAN.
 
 **Success criteria (v1):**
 
@@ -22,9 +22,9 @@ laptop, over the home LAN.
 2. A month's bank CSV imports **without double-counting** and without hand-editing
    the file first.
 3. Any household member can answer "how much did we spend on X this month" and
-   "where did Dad's money go" from the dashboard alone.
+   "how much of that was me vs my wife" from the dashboard alone.
 4. Backup is **copying one file**.
-5. The UI is one a partner or a kid can read **across the room**.
+5. The UI is one you can read **across the room** — no leaning in, no squinting.
 
 **Explicitly not a product.** No multi-tenancy, no billing, no onboarding, no
 marketing, no internet-facing hardening.
@@ -35,7 +35,7 @@ marketing, no internet-facing hardening.
 
 ### In v1
 
-- Members, sessions, login, roles (adult / kid), first-run setup wizard.
+- Members, sessions, login, first-run setup wizard. Two members, both full-access adults.
 - Accounts (bank / cash / wallet / credit) with opening balances.
 - Transactions: manual add/edit/delete, transfers between accounts.
 - Categories: flat or nested, emoji + colour, archivable.
@@ -49,10 +49,10 @@ marketing, no internet-facing hardening.
 
 | Slice | Contents |
 |---|---|
-| 2 | Budgets / envelopes, recurring bills, goals |
+| 2 | **Budgets (immediately next priority)** — monthly limit per category; then envelopes, recurring bills, goals |
 | 3 | Live bank sync (SimpleFIN / GoCardless), PDF statement parsing |
 | 4 | Investments & asset valuation |
-| 5 | Kid allowance pockets, gamification |
+| 5 | Kid role + PIN, kid allowance pockets, gamification |
 | 6 | TLS via Caddy, multi-household, event-sourced audit log |
 | — | Multi-currency, FX rates — **not planned**, revisit only if it becomes real |
 
@@ -79,7 +79,7 @@ family-finance/
 │   │   │   ├── security.py      # argon2, session tokens, CSRF/origin checks
 │   │   │   ├── money.py         # parse/format rupiah; no floats, ever
 │   │   │   ├── errors.py        # domain exceptions + handlers
-│   │   │   └── deps.py          # auth dependencies, role guards
+│   │   │   └── deps.py          # auth dependencies (session -> current member)
 │   │   └── modules/
 │   │       ├── auth/            # members, sessions, login, rate limit
 │   │       ├── accounts/        # router / service / models / schemas
@@ -131,7 +131,8 @@ CREATE TABLE members (
   name          TEXT    NOT NULL,
   username      TEXT    NOT NULL UNIQUE,
   password_hash TEXT    NOT NULL,
-  role          TEXT    NOT NULL CHECK (role IN ('adult','kid')),
+  role          TEXT    NOT NULL DEFAULT 'adult'
+                CHECK (role IN ('adult','kid')),   -- v1 only ever writes 'adult'
   avatar_color  TEXT    NOT NULL DEFAULT '#118AB2',
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -246,12 +247,13 @@ CREATE TABLE settings (
 |---|---|---|
 | 1 | **Single-entry + paired transfer legs**, not double-entry | Balance = `opening_balance + SUM(amount)`. Firefly's double-entry is ceremony at family scale. Both legs written in one DB transaction. |
 | 2 | Signed `INTEGER` rupiah | No floats, no cents, no rounding bugs. |
-| 3 | Attribution as **nullable tag FKs**, not separate ledgers | One wallet, but "what did Dad spend on the kids" is still answerable. Nullable → you may not care. |
+| 3 | Attribution as **nullable tag FKs**, not separate ledgers | One wallet, but "how much of this was me vs my wife" is still answerable. Nullable → you may not care. |
 | 4 | `category_id` **nullable** | An unmapped CSV row must still import. Never block on a missing category. |
 | 5 | Dedupe via **partial unique `import_hash`** | Re-importing the same statement is a no-op. Partial index keeps manual entries (`NULL`) unlimited. |
 | 6 | `archived` flags, never hard deletes | Transactions reference these rows; history must not break. |
 | 7 | Balances **computed**, not stored | Family scale. A stored running balance is an optimisation with no buyer. |
 | 8 | Money ban on floats | Asserted in tests. |
+| 9 | `role` column kept, **kid logic not built** | Migration-free path to kid accounts in slice 5, with zero speculative permission code in v1. |
 
 ### `import_hash` definition
 
@@ -284,11 +286,12 @@ accepted row appears in both — intentionally.
   cookie is simpler *and* stronger; JWTs would cost refresh machinery and lose
   revocation. A `sessions` row is revocable instantly.
 - **Argon2id** password hashing.
-- **Roles:** `adult` = full read/write, manage members, import, edit rules.
-  `kid` = read-only plus a "my money" view filtered to `for_whom`; cannot edit,
-  import, or manage accounts.
-- **Login:** adults need a ≥12-char password. `kid` accounts may use a 6-digit
-  PIN — safe *only* because of the rate limit below.
+- **No role gating in v1.** The household is two adults, both full read/write —
+  manage members, import, edit rules, everything. The `role` column exists
+  (always `'adult'`) only so that kid accounts are a migration-free addition in
+  slice 5; **no speculative permission code is written now**.
+- **Login:** both members use a ≥12-char password. (Kid PINs arrive with the kid
+  role in slice 5.)
 - **First-run setup:** if `members` is empty, only `/setup` is reachable; the
   first adult is created there. **No seeded default user** — that's the hole
   that gets self-hosted apps owned.
@@ -473,18 +476,20 @@ descriptions or amounts.
 
 1. **SQLite single-writer.** Fine for 3 people. Would need Postgres only if you ever added a second household.
 2. **CSV drift.** Banks change exports. The generic mapper absorbs most of it; a changed encoding mid-file fails loudly rather than silently.
-3. **No TLS on LAN.** Accepted trade (see §5). Revisit if ever exposed.
-4. **Kid PINs** are only safe because of the rate limit. Removing the limit makes PINs a liability.
-5. **Description-embedded reference numbers** break naive dedupe; mitigated by the `possible_duplicate` second pass (§4).
+3. **No TLS on LAN.** Accepted trade (see §5). You and your wife on your own home PC — revisit only if it's ever exposed beyond the house.
+4. **Description-embedded reference numbers** break naive dedupe; mitigated by the `possible_duplicate` second pass (§4).
+5. **If kid accounts are added in slice 5**, the 6-digit PIN is only safe because of the rate limit. Removing that limit would make PINs a liability.
 
 ---
 
-## 10. Assumptions to confirm
+## 10. Confirmed decisions
 
-1. **UI copy is in Bahasa Indonesia** (the mockups used it). Say if you want English or bilingual.
-2. Household is **2 adults**, kids optional.
-3. Reference apps were reviewed for **feature ideas only** — no code is copied from them, so their licences (AGPL/GPL/MIT) don't apply to this project.
-4. Project lives at `~/Projects/family-finance`, separate from the TELKOM work monorepo.
+1. **UI copy is in Bahasa Indonesia.** Confirmed.
+2. **Household is 2 adults** (you and your wife) on the home PC over the LAN. No kids, so no kid role in v1 (§5).
+3. **Budgets are the main motivation**, and land **immediately after v1** as slice 2 (§2) — after a month of real data, so limits are informed rather than guessed.
+4. **LAN only, no TLS in v1.** Accepted trade, documented in §5.
+5. Reference apps were reviewed for **feature ideas only** — no code is copied, so their licences (AGPL/GPL/MIT) don't apply to this project.
+6. Project lives at `~/Projects/family-finance`, remote `git@github.com:nugraharzk/family-finance.git`, separate from the TELKOM work monorepo.
 
 ---
 
@@ -497,7 +502,7 @@ v1 is one deliverable but too large for a single flat task list, so the plan
 should be phased — each phase ending in something runnable:
 
 1. **Skeleton** — repo, Dockerfile, compose, FastAPI app factory, SQLite PRAGMAs, Alembic, `/api/health`, Nuxt scaffold with Tailwind + `@theme` tokens and the `border-brutal` / `shadow-brutal` / `press` utilities.
-2. **Members & auth** — setup wizard, login, sessions, roles, rate limit, role guards.
+2. **Members & auth** — setup wizard, login, sessions, rate limit, CSRF/origin checks.
 3. **Accounts & categories** — CRUD, archive, emoji/colour, nesting.
 4. **Transactions** — manual add/edit/delete, transfers, attribution, filters.
 5. **Import** — sniff, profiles, all four amount modes, date ambiguity gate, dedupe, rules, review, commit, rollback.
