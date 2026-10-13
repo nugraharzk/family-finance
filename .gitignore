@@ -1,0 +1,11 @@
+.superpowers/
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.nuxt/
+.output/
+*.db
+*.db-wal
+*.db-shm
+.env
