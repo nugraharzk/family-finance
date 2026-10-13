@@ -90,6 +90,8 @@ family-finance/
 │   │   └── migrations/          # Alembic
 │   └── tests/
 ├── frontend/                    # Nuxt 3 (Vue 3) — SPA, static build
+│   ├── assets/css/main.css      # @theme tokens + brutalist utilities
+│   └── ...
 ├── Dockerfile                   # multi-stage: node build → python runtime
 ├── docker-compose.yml           # 1 service + 1 volume (app.db)
 └── docs/superpowers/specs/
@@ -351,25 +353,52 @@ one bad line never 500s a 400-row import.
 
 Neo-brutalist but friendly. Flat colour, hard black border, hard offset shadow.
 
-**Tokens**
+**Tokens** — declared **once** in `frontend/assets/css/main.css` via Tailwind v4's CSS-first `@theme` block. Screens never repeat these hex codes.
 
-| Token | Value | Use |
-|---|---|---|
-| `--paper` | `#FDFCF7` | page background |
-| `--ink` | `#111111` | all text, all borders |
-| `--in` | `#06D6A0` | money in |
-| `--out` | `#EF476F` | money out |
-| `--hi` | `#FFD166` | highlight / CTA |
-| `--info` | `#118AB2` | informational |
-| `--cat` | `#C9B6FF` | category accents |
-| `--muted` | `#8D99AE` | secondary text |
-| border | `2.5px solid var(--ink)` | every surface |
-| shadow | `4px 4px 0 var(--ink)` | every surface |
-| radius | `10–14px` | softened brutalist |
+| Token | Value | Use | Tailwind class |
+|---|---|---|---|
+| `--color-paper` | `#FDFCF7` | page background | `bg-paper` |
+| `--color-ink` | `#111111` | all text, all borders | `text-ink` `border-ink` |
+| `--color-in` | `#06D6A0` | money in | `text-in` `bg-in` |
+| `--color-out` | `#EF476F` | money out | `text-out` `bg-out` |
+| `--color-hi` | `#FFD166` | highlight / CTA | `bg-hi` |
+| `--color-info` | `#118AB2` | informational | `bg-info` |
+| `--color-cat` | `#C9B6FF` | category accents | `bg-cat` |
+| `--color-muted` | `#8D99AE` | secondary text | `text-muted` |
 
-No gradients. No blur. No glassmorphism. No component library — CSS custom
-properties in one stylesheet plus Vue SFC scoped styles. Tailwind would be a
-dependency buying nothing at this size.
+No gradients. No blur. No glassmorphism. **No component kit** — no shadcn, no
+PrimeVue; those would fight the aesthetic and drag in their own design language.
+
+**Styling: Tailwind CSS v4** via `@nuxtjs/tailwindcss`. Tailwind handles layout,
+spacing, typography, and — the reason it won — responsive breakpoints
+(`md:` / `lg:`) for the mobile→desktop sidebar switch.
+
+The usual brutalist-Tailwind mess is repeated arbitrary values
+(`border-[2.5px] shadow-[4px_4px_0_#111]` on every element). That's neutralised by
+declaring the primitives once:
+
+```css
+@theme {
+  --color-paper: #FDFCF7;  --color-ink:  #111111;
+  --color-in:    #06D6A0;  --color-out:  #EF476F;
+  --color-hi:    #FFD166;  --color-info: #118AB2;
+  --color-cat:   #C9B6FF;  --color-muted:#8D99AE;
+  --radius-brutal: 12px;
+}
+
+@utility border-brutal { border: 2.5px solid var(--color-ink); }
+@utility shadow-brutal { box-shadow: 4px 4px 0 var(--color-ink); }
+@utility press        { box-shadow: none; translate: 4px 4px; }
+```
+
+Screens then read as ordinary utilities — `border-brutal shadow-brutal bg-hi
+text-ink rounded-brutal active:press` — with **no arbitrary values and no
+repeated hex**. Changing the shadow means editing one `@utility`, not grepping
+40 files.
+
+**Tradeoff accepted:** one dependency plus a config file, in exchange for free
+responsive utilities. The risk to watch is Tailwind conventions leaking into the
+*design* — tokens remain the source of truth, never inline hex.
 
 **Signature interaction.** Press = the offset shadow collapses to `0` and the
 element translates `4px` into the gap. Physical, cheap, impossible to get from a
@@ -467,7 +496,7 @@ references and executable QA scenarios, derived from this spec.
 v1 is one deliverable but too large for a single flat task list, so the plan
 should be phased — each phase ending in something runnable:
 
-1. **Skeleton** — repo, Dockerfile, compose, FastAPI app factory, SQLite PRAGMAs, Alembic, `/api/health`, Nuxt scaffold with the token stylesheet.
+1. **Skeleton** — repo, Dockerfile, compose, FastAPI app factory, SQLite PRAGMAs, Alembic, `/api/health`, Nuxt scaffold with Tailwind + `@theme` tokens and the `border-brutal` / `shadow-brutal` / `press` utilities.
 2. **Members & auth** — setup wizard, login, sessions, roles, rate limit, role guards.
 3. **Accounts & categories** — CRUD, archive, emoji/colour, nesting.
 4. **Transactions** — manual add/edit/delete, transfers, attribution, filters.
